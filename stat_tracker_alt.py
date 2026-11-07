@@ -1,28 +1,38 @@
 
 import statistics
+from pathlib import Path
+
 import pandas as pd
 
 TRACKS = "outputs/layups_pipeline/tracks.csv"
 FPS = 29.98
 
 # hoop
-HOOP_SHAPE = (0.5, 0.8)    # height / width of a rim+net box (taller boxes include the backboard)
-HOOP_SMOOTH = 0.25       # median the hoop box over +/- this many seconds
+HOOP_SHAPE = (0.5, 0.8)      # allowed height-to-width ratio of the hoop box; taller boxes include the backboard
+HOOP_SMOOTH_S = 0.25         # median window for the hoop box, s on each side of a frame
 
 # ball
-ZONE_U = (-1.5, 1.5)       # only trust balls this close to the hoop sideways...
-ZONE_V = (-1.5, 2.5)       # ...and up / down
-SPOT_SIZE = 0.1            # grid size (hoop widths) for finding fixed objects
-FIXED_SHARE = 0.4          # a spot with a "ball" in more than this share of seconds is a fixed object
-MAX_SPEED = 15             # fastest the ball moves (hoop widths per second; shots reach the rim at ~10)
-JITTER = 0.3               # extra room (hoop widths) for boxes wobbling between frames
-LOST_S = 0.5               # a track not seen for this long ends (a ball showing up later starts a new one)
+ZONE_U = (-1.5, 1.5)         # allowed sideways range from the hoop center, hoop widths
+ZONE_V = (-1.5, 2.5)         # allowed vertical range from the rim, hoop widths (negative = above)
+SPOT_SIZE = 0.1              # grid spot size for finding fixed objects, hoop widths
+FIXED_SHARE = 0.4            # minimum share of the video's seconds for a spot to count as a fixed object
+MAX_SPEED = 15               # maximum ball speed, hoop widths/s (shots reach the rim at about 10)
+SPEED_CHANGE = 8             # maximum difference from the track's predicted speed, hoop widths/s
+JITTER = 0.3                 # extra distance allowed for box wobble between frames, hoop widths
+LOST_S = 0.5                 # maximum time a track can go unseen before it ends, s
+
+# release
+HOLD_MARGIN = 0.45           # widening of each person's box for the holding check, fraction of box width
+RELEASE_MAX_S = 3            # maximum search time before the attempt for the release, s
+HOLD_MIN_S = 0.1             # minimum time in a player's hands to count as held, s
+POSSESSION_SMOOTH_S = 0.08   # majority vote window for possession, s on each side of a frame
+HOLD_TOP = 0.8               # lowest point the ball can be in a person's box and still count as held, fraction of box height from the top
 
 # attempts
-ATTEMPT_V = 0.45           # attempt: ball comes up to about rim height...
-ATTEMPT_U = 1.0            # ...this close to the hoop sideways...
-ATTEMPT_CONF = 0.2         # ...with at least this confidence
-SAME_SHOT_S = 0.75         # rim-height moments closer than this are one attempt
+ATTEMPT_V = 0.45             # maximum distance below the rim to count as rim height, hoop widths
+ATTEMPT_U = 1.0              # maximum sideways distance from the hoop center, hoop widths
+ATTEMPT_CONF = 0.2           # minimum detection confidence for an attempt, 0 to 1
+SAME_SHOT_S = 0.75           # maximum gap between rim-height moments in the same attempt, s
 
 
 # Helper functions
@@ -89,7 +99,7 @@ def steady_hoop(detections, num_frames):
             # check if valid ratio (with net, bounding box is taller)
             if not (HOOP_SHAPE[0] <= ratio <= HOOP_SHAPE[1]):
                 continue
-            # take most confident box if there exist two hoop boxes in the frame
+            # take most confident box if there exist multiple hoop boxes in the frame
             if frame not in best_hoop_box or box["confidence"] > best_hoop_box[frame]["confidence"]:
                 best_hoop_box[frame] = box
 
@@ -113,7 +123,6 @@ def steady_hoop(detections, num_frames):
 
 
 def find_fixed_spots(detections, hoop, num_frames):
-    # record which seconds of the video had a ball at each spot
     seconds_at_spot = {}
     for frame, boxes in detections["ball"].items():
         if hoop[frame] is None:
@@ -145,49 +154,72 @@ def find_fixed_spots(detections, hoop, num_frames):
 
 def ball_candidates(detections, hoop, num_frames):
     fixed = find_fixed_spots(detections, hoop, num_frames)
+    # initialize nested list to hold candidate info
     candidates = [[] for _ in range(num_frames)]
     for frame, boxes in detections["ball"].items():
+        # if our frame has no hoop, continue loop (bc net + ball overlap loses both detections)
         if hoop[frame] is None:
             continue
         for box in boxes:
             u, v = to_hoop_coords(box, hoop[frame])
+            # ignore fixed ball spots
             if to_spot(u, v) in fixed:
                 continue
-            candidates[frame].append({"u": u, "v": v, "confidence": box["confidence"]})
+            candidates[frame].append({"u": u, "v": v, "confidence": box["confidence"], 
+                                      "x": (box["x1"] + box["x2"]) / 2, "y": (box["y1"] + box["y2"]) / 2})
     return candidates
 
+def predict(track, frame):
+    # find positiion of latest ball
+    last_ball = track["points"][track["last_frame"]]
+    # find time since that latest frame
+    seconds_since = (frame - track["last_frame"]) / FPS
+    if track["speed"] is None:
+        # new track, speed unknown, could be anywhere, return search space around position
+        return last_ball, JITTER + MAX_SPEED * seconds_since
+    # keep moving at its last speed, give or take SPEED_CHANGE, incorrect label cant jump in position to take over ball track
+    speed_u, speed_v = track["speed"]
+    expected = {"u": last_ball["u"] + speed_u * seconds_since, "v": last_ball["v"] + speed_v * seconds_since}
+    return expected, JITTER + SPEED_CHANGE * seconds_since
 
 def ball_tracks(detections, hoop, num_frames):
-    # follow every ball at once
+    # track all ball candidates
     candidates = ball_candidates(detections, hoop, num_frames)
     tracks = []
     for frame in range(num_frames):
-        # only keep following tracks seen recently
+        # only keep following tracks that existed recently (to separate lost vs. noise)
         active = [t for t in tracks if frame - t["last_frame"] <= frames(LOST_S)]
 
         # every (candidate, track) pair where the track's ball could have moved to that candidate
         pairs = []
         for i, ball in enumerate(candidates[frame]):
             for j, track in enumerate(active):
-                last_ball = track["points"][track["last_frame"]]
-                seconds_since = (frame - track["last_frame"]) / FPS
-                if distance(ball, last_ball) <= JITTER + MAX_SPEED * seconds_since:
-                    pairs.append((distance(ball, last_ball), i, j))
+                expected, reach = predict(track, frame)
+                if distance(ball, expected) <= reach:
+                    pairs.append((distance(ball, expected), i, j))
 
-        # closest pairs first with each candidate and each track max one reference
+        # closest pairs first with each candidate and each track only used once at most
+        # this is a greedy approach but prob will work for most cases
         used_balls, used_tracks = set(), set()
         for _, i, j in sorted(pairs):
             if i in used_balls or j in used_tracks:
                 continue
+            # get speed from the last point to this one, for predicting the next frame
+            last_ball = active[j]["points"][active[j]["last_frame"]]
+            seconds_since = (frame - active[j]["last_frame"]) / FPS
+            active[j]["speed"] = ((candidates[frame][i]["u"] - last_ball["u"]) / seconds_since,
+                                  (candidates[frame][i]["v"] - last_ball["v"]) / seconds_since)
             active[j]["points"][frame] = candidates[frame][i]
             active[j]["last_frame"] = frame
+            candidates[frame][i]["track"] = active[j]
             used_balls.add(i)
             used_tracks.add(j)
 
         # anything left over is a new ball or a bad detection
         for i, ball in enumerate(candidates[frame]):
             if i not in used_balls:
-                tracks.append({"points": {frame: ball}, "last_frame": frame})
+                tracks.append({"points": {frame: ball}, "last_frame": frame, "speed": None})
+                ball["track"] = tracks[-1]
     return tracks
 
 
@@ -218,6 +250,33 @@ def find_attempts(track):
     return attempts
 
 
+def in_hands(ball, person):
+    # ball center inside the person's box with HOLD_MARGIN of padding
+    margin = HOLD_MARGIN * (person["x2"] - person["x1"])
+    return ((person["x1"] - margin <= ball["x"] <= person["x2"] + margin) and (person["y1"] - margin <= ball["y"] <= person["y2"]))
+
+
+def find_release(shot_track, start, detections):
+    # go back along the shot balls path from the rim to the last frame a player had it
+    path = shot_track[start]["track"]["points"]
+    release = None      # latest in-hands frame of the current run
+    for frame in sorted(path, reverse=True):
+        if frame > start:
+            continue
+        if start - frame > frames(RELEASE_MAX_S):
+            return None
+        people = detections["person"].get(frame, [])
+        if any(in_hands(path[frame], person) for person in people):
+            if release is None:
+                release = frame
+            # held long enough, so valid
+            if release - frame >= frames(HOLD_MIN_S):
+                return release
+        else:
+            release = None
+    return None
+
+
 def leaves_net(track, start, end):
     # TODO: implement
     pass
@@ -237,6 +296,84 @@ def is_make(track, start, end):
     pass
 
 
+def possession(detections, tracks, num_frames):
+    """
+    this is ai generated code
+    """
+    in_hand = [False] * num_frames
+    for track in tracks:
+        for frame, ball in track["points"].items():
+            for person in detections["person"].get(frame, []):
+                above_feet = ball["y"] <= person["y1"] + HOLD_TOP * (person["y2"] - person["y1"])
+                if in_hands(ball, person) and above_feet:
+                    in_hand[frame] = True
+    window = frames(POSSESSION_SMOOTH_S)
+    smoothed = []
+    for frame in range(num_frames):
+        nearby = in_hand[max(0, frame - window):frame + window + 1]
+        smoothed.append(sum(nearby) > len(nearby) / 2)
+    return smoothed
+
+
+def export(detections, hoop, tracks, track, num_frames):
+    """
+    this is ai generated code
+    """
+    out_dir = Path(TRACKS).parent
+
+    shot_rows = []
+    for number, (start, end) in enumerate(find_attempts(track), start=1):
+        release = find_release(track, start, detections)
+        exit = leaves_net(track, start, end)
+        make = is_make(track, start, end)
+        shot_rows.append({
+            "shot": number,
+            "release_frame": release,                     
+            "rim_frame": start,
+            "exit_frame": exit[0] if exit else None,     
+            "result": {True: "make", False: "miss"}.get(make, ""),
+            "fps": FPS,
+        })
+    shots = pd.DataFrame(shot_rows, columns=["shot", "release_frame", "rim_frame", "exit_frame", "result", "fps"])
+    shots = shots.astype({"release_frame": "Int64", "exit_frame": "Int64"})
+    shots.to_csv(out_dir / "shots.csv", index=False)
+
+    balls_in_frame = [[] for _ in range(num_frames)]
+    for t in tracks:
+        for frame, ball in t["points"].items():
+            balls_in_frame[frame].append(ball)
+    best_ball = [None] * num_frames
+    current, last_seen = None, None   
+    for frame in range(num_frames):
+        if current is not None and frame in current["points"]:
+            best_ball[frame] = current["points"][frame]
+            last_seen = frame
+        elif current is not None and frame - last_seen <= frames(LOST_S):
+            continue    
+        elif balls_in_frame[frame]:
+            best_ball[frame] = max(balls_in_frame[frame], key=lambda b: b["confidence"])
+            current, last_seen = best_ball[frame]["track"], frame
+    has_ball = possession(detections, tracks, num_frames)
+
+    frame_rows = []
+    for frame in range(num_frames):
+        ball, h = best_ball[frame], hoop[frame]
+        frame_rows.append({
+            "frame": frame,
+            "ball_x": round(ball["x"]) if ball else None,
+            "ball_y": round(ball["y"]) if ball else None,
+            "hoop_x1": round(h["x1"]) if h else None,
+            "hoop_y1": round(h["y1"]) if h else None,
+            "hoop_x2": round(h["x2"]) if h else None,
+            "hoop_y2": round(h["y2"]) if h else None,
+            "possession": has_ball[frame],
+            "fps": FPS,
+        })
+    whole = ["ball_x", "ball_y", "hoop_x1", "hoop_y1", "hoop_x2", "hoop_y2"]
+    pd.DataFrame(frame_rows).astype({c: "Int64" for c in whole}).to_csv(out_dir / "frames.csv", index=False)
+    print(f"wrote {out_dir / 'shots.csv'} and {out_dir / 'frames.csv'}")
+
+
 def main():
     detections, num_frames = load()
     hoop = steady_hoop(detections, num_frames)
@@ -244,7 +381,10 @@ def main():
     track = shot_ball(tracks, num_frames)
     for start, end in find_attempts(track):
         result = "make" if is_make(track, start, end) else "miss"
-        print(f"shot attempt at {start / FPS:.1f}s, {result}")
+        release = find_release(track, start, detections)
+        released = f"released at {release / FPS:.1f}s" if release is not None else "release not found"
+        print(f"shot attempt at {start / FPS:.1f}s ({released}), {result}")
+    export(detections, hoop, tracks, track, num_frames)
 
 
 if __name__ == "__main__":
