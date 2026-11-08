@@ -29,6 +29,7 @@ RIM_V = 0.45                # maximum distance below the rim to count as rim hei
 RIM_U = 1.0                 # maximum sideways distance from the hoop center, hoop widths
 RIM_CONF = 0.2              # minimum detection confidence for an attempt, 0 to 1
 SAME_SHOT_S = 0.75          # maximum gap between rim-height moments in the same attempt, s
+NET_EXIT_S = 1.5            # maximum time after the rim for the ball to exit the net, s
 
 # release: walk back from the rim to the last real hold
 HOLD_MARGIN = 0.45          # widening of each person's box for the holding check, fraction of box width
@@ -463,24 +464,66 @@ def leaves_net(shot, hoop_ball):
     Returns:
         Tuple starting with the exit frame, or None if the ball never comes down through the net.
     """
-    # TODO: implement
-    pass
+
+    # make sure we are looking at the correct ball
+    start_ball = hoop_ball[shot.rim_frame]
+    if start_ball is None:
+        return None
+
+    path = start_ball.path
+
+    # find last frame where the ball is still in the shot event (above or at rim height)
+    previous_frames = [f for f  in path.balls if f <= shot.rim_end_frame]
+    previous = path.balls[max(previous_frames)]
+
+    # find the frame with the ball immediately after shot event
+    for f in sorted(path.balls):
+        if f <= shot.rim_end_frame:
+            continue
+        if f - shot.rim_end_frame > to_frames(NET_EXIT_S):
+            break
+        ball = path.balls[f]
+
+        crossed_rim = previous.v <= RIM_V and ball.v > RIM_V
+        moving_down = ball.v > previous.v
+
+        if crossed_rim and moving_down:
+            return f
+
+        # so that eventually the previous should cross the rim
+        previous = ball
+
+    return None
+# do we have to check that the ball is in the correct x position?
+# or is that already checked when the Shot is instantiated?
 
 
-def net_hid_it(shot, hoop_ball, exit_frame, hidden_frames):
+def net_hid_it(shot, hoop_ball, exit_frame, min_hidden_frames):
     """Make clue: the net hid the ball just before it came out.
 
     Args:
         shot: Shot to check.
         hoop_ball: From hoop_balls.
         exit_frame: From leaves_net.
-        hidden_frames: Frames the ball went unseen just before the exit.
+        hidden_frames: allowable frames the ball can go unseen before the exit.
 
     Returns:
         True if the net hid the ball.
     """
-    # TODO: implement
-    pass
+    if exit_frame is None:
+        return False
+
+    # look between last rim_end_frame and exit_frame
+    hidden_count = 0
+    max_hidden = 0
+
+    for f in range(shot.rim_end_frame +1, exit_frame):
+        if hoop_ball[f] is None:
+            hidden_count += 1
+            max_hidden = max(hidden_count, max_hidden)
+        else: hidden_count = 0
+
+    return max_hidden >= min_hidden_frames
 
 
 def net_slowed_it(hoop_ball, exit_frame):
