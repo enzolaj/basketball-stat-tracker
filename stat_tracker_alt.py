@@ -43,6 +43,7 @@ SLOW_DROP =  4.5
 RIM_EDGE_U = 0.5
 NEAR_CENTER_U = 0.3
 MIN_HIDDEN_FRAMES = 3
+NET_BOTTOM_V = 0.55
 
 
 # possession: skip balls at the feet, vote out flicker
@@ -473,33 +474,29 @@ def leaves_net(shot, hoop_ball):
     Returns:
         Tuple starting with the exit frame, or None if the ball never comes down through the net.
     """
-
     # make sure we are looking at the correct ball
     start_ball = hoop_ball[shot.rim_frame]
     if start_ball is None:
         return None
 
-    path = start_ball.path
+    previous = start_ball
 
-    # find last frame where the ball is still in the shot event (above or at rim height)
-    previous_frames = [f for f  in path.balls if f <= shot.rim_end_frame]
-    previous = path.balls[max(previous_frames)]
-
-    # find the frame with the ball immediately after shot event
-    for f in sorted(path.balls):
-        if f <= shot.rim_end_frame:
-            continue
+    # find the frame where the ball comes out the bottom of the net
+    # use hoop_ball, not the path: the net hiding the ball breaks the path
+    for f in range(shot.rim_frame + 1, len(hoop_ball)):
         if f - shot.rim_end_frame > to_frames(NET_EXIT_S):
             break
-        ball = path.balls[f]
+        ball = hoop_ball[f]
+        if ball is None:
+            continue
 
-        crossed_rim = previous.v <= RIM_V and ball.v > RIM_V
+        crossed_net = previous.v <= NET_BOTTOM_V and ball.v > NET_BOTTOM_V
         moving_down = ball.v > previous.v
 
-        if crossed_rim and moving_down:
+        if crossed_net and moving_down:
             return f, ball.u
 
-        # so that eventually the previous should cross the rim
+        # so that eventually the previous should cross the net
         previous = ball
 
     return None
@@ -523,13 +520,14 @@ def net_hid_it(shot, hoop_ball, exit_frame, min_hidden_frames):
     if exit_frame is None:
         return False
 
-    # look between last rim_end_frame and exit_frame
+    # look between the last frame at rim height and exit_frame
     hidden_count = 0
     max_hidden = 0
 
-    path = hoop_ball[shot.rim_frame].path
-    for f in range(shot.rim_end_frame + 1, exit_frame):
-        if f not in path.balls:
+    at_rim = [f for f in range(shot.rim_frame, exit_frame) if hoop_ball[f] is not None and hoop_ball[f].v <= RIM_V]
+    start = at_rim[-1] if at_rim else shot.rim_frame
+    for f in range(start + 1, exit_frame):
+        if hoop_ball[f] is None:
             hidden_count += 1
             max_hidden = max(hidden_count, max_hidden)
         else: hidden_count = 0
