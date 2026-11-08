@@ -36,6 +36,15 @@ HOLD_MARGIN = 0.45          # widening of each person's box for the holding chec
 RELEASE_LOOKBACK_S = 3      # maximum search time before the rim for the release, s
 HOLD_MIN_S = 0.1            # minimum time in a player's hands to count as held, s
 
+# make and miss:
+SLOW_WINDOW_S = 0.2
+SLOW_MIN_SEEN = 3
+SLOW_DROP =  4.5
+RIM_EDGE_U = 0.5
+NEAR_CENTER_U = 0.3
+MIN_HIDDEN_FRAMES = 3
+
+
 # possession: skip balls at the feet, vote out flicker
 POSSESSION_SMOOTH_S = 0.08  # majority vote window for possession, s on each side of a frame
 HOLD_LOWEST = 0.8           # lowest point the ball can be in a person's box and still count as held, fraction of box height
@@ -488,7 +497,7 @@ def leaves_net(shot, hoop_ball):
         moving_down = ball.v > previous.v
 
         if crossed_rim and moving_down:
-            return f
+            return f, ball.u
 
         # so that eventually the previous should cross the rim
         previous = ball
@@ -496,6 +505,7 @@ def leaves_net(shot, hoop_ball):
     return None
 # do we have to check that the ball is in the correct x position?
 # or is that already checked when the Shot is instantiated?
+# check that in is_make
 
 
 def net_hid_it(shot, hoop_ball, exit_frame, min_hidden_frames):
@@ -517,8 +527,9 @@ def net_hid_it(shot, hoop_ball, exit_frame, min_hidden_frames):
     hidden_count = 0
     max_hidden = 0
 
-    for f in range(shot.rim_end_frame +1, exit_frame):
-        if hoop_ball[f] is None:
+    path = hoop_ball[shot.rim_frame].path
+    for f in range(shot.rim_end_frame + 1, exit_frame):
+        if f not in path.balls:
             hidden_count += 1
             max_hidden = max(hidden_count, max_hidden)
         else: hidden_count = 0
@@ -534,11 +545,24 @@ def net_slowed_it(hoop_ball, exit_frame):
         exit_frame: From leaves_net.
 
     Returns:
-        True if the ball slowed.
+        True if the ball slowed, None with too few sightings to tell.
     """
-    # TODO: implement
-    pass
+    # collect the frames in the window right after the exit where the ball was seen
+    window_end = min(len(hoop_ball), exit_frame + to_frames(SLOW_WINDOW_S))
+    seen = []
+    for f in range(exit_frame, window_end):
+        if hoop_ball[f] is not None:
+            seen.append(f)
 
+    if len(seen) < SLOW_MIN_SEEN:
+        return None
+
+    # average downward speed from the first to the last sighting, hoop widths/s
+    first = hoop_ball[seen[0]]
+    last = hoop_ball[seen[-1]]
+    seconds = (last.frame - first.frame) / FPS
+    speed = (last.v - first.v) / seconds
+    return 0 <= speed < SLOW_DROP
 
 def is_make(shot, hoop_ball):
     """Decides make or miss from the net clues.
@@ -550,9 +574,25 @@ def is_make(shot, hoop_ball):
     Returns:
         True for a make, False for a miss, None if undecided.
     """
-    # TODO: implement
-    pass
+    net_exit = leaves_net(shot, hoop_ball)
+    if net_exit is None:
+        return False
+    exit_frame, exit_u = net_exit
 
+    # leaves_net no longer rejects misses, so check here that the ball came down inside the rim
+    if abs(exit_u) >= RIM_EDGE_U:
+        return False
+
+    votes = [abs(exit_u) < NEAR_CENTER_U,
+             net_hid_it(shot, hoop_ball, exit_frame, MIN_HIDDEN_FRAMES),
+             net_slowed_it(hoop_ball, exit_frame)]
+
+    # need 2 of 3 clues to agree; net_slowed_it can abstain with None
+    if votes.count(True) >= 2:
+        return True
+    if votes.count(False) >= 2:
+        return False
+    return None
 
 # The following code is majorly AI-generated since its mainly for visuals
 
