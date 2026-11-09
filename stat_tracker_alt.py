@@ -5,10 +5,12 @@ From a given CSV (generated from track_yoloe.py), export two CSVs containing sho
 import statistics
 from pathlib import Path
 
+import cv2
 import pandas as pd
 
 TRACKS = "outputs/layups_pipeline/tracks.csv"
-FPS = 29.98
+VIDEO = "data/layups.mov"
+FPS = cv2.VideoCapture(VIDEO).get(cv2.CAP_PROP_FPS)   # read per video, so 60 fps clips keep the right time settings
 
 # hoop: reject backboard-sized boxes, median out detector wobble
 HOOP_SHAPE = (0.5, 0.8)     # allowed height-to-width ratio of the hoop box; taller boxes include the backboard
@@ -47,8 +49,8 @@ NET_BOTTOM_V = 0.55
 
 
 # possession: skip balls at the feet, vote out flicker
-POSSESSION_SMOOTH_S = 0.08  # majority vote window for possession, s on each side of a frame
-HOLD_LOWEST = 0.8           # lowest point the ball can be in a person's box and still count as held, fraction of box height
+POSSESSION_SMOOTH_S = 0.2  # majority vote window for possession, s on each side of a frame
+HOLD_LOWEST = 0.9           # lowest point the ball can be in a person's box and still count as held, fraction of box height
 
 # overlay: keep the drawn ball steady when a hand covers it
 DRAW_SWITCH_CONF = 0.5      # minimum confidence to jump the drawn ball to a far-away ball, 0 to 1
@@ -657,7 +659,34 @@ def ball_to_draw(candidates, num_frames):
     return drawn_ball
 
 
-def export(out_dir, shots, hoop, drawn_ball, has_ball, num_frames):
+def player_to_draw(detections, drawn_ball, num_frames):
+    """Picks one player box per frame for the overlay.
+
+    Takes the person nearest the drawn ball, so the highlight follows whoever is playing it;
+    else the most confident person.
+
+    Args:
+        detections: From load_detections.
+        drawn_ball: From ball_to_draw.
+        num_frames: Frame count.
+
+    Returns:
+        List per frame of the person Box to draw, or None.
+    """
+    player = [None] * num_frames
+    for frame in range(num_frames):
+        people = detections["person"].get(frame, [])
+        if not people:
+            continue
+        ball = drawn_ball[frame]
+        if ball is not None:
+            player[frame] = min(people, key=lambda person: abs(person.center_x - ball.x) + abs(person.center_y - ball.y))
+        else:
+            player[frame] = max(people, key=lambda person: person.confidence)
+    return player
+
+
+def export(out_dir, shots, hoop, drawn_ball, player, has_ball, num_frames):
     """Writes shots.csv (one row per shot) and frames.csv (one row per frame).
 
     Leaves cells blank where a value is unknown.
@@ -667,6 +696,7 @@ def export(out_dir, shots, hoop, drawn_ball, has_ball, num_frames):
         shots: From find_shots, with results filled in.
         hoop: From steady_hoop.
         drawn_ball: From ball_to_draw.
+        player: From player_to_draw.
         has_ball: From find_possession.
         num_frames: Frame count.
     """
@@ -678,7 +708,7 @@ def export(out_dir, shots, hoop, drawn_ball, has_ball, num_frames):
 
     frame_rows = []
     for frame in range(num_frames):
-        ball, h = drawn_ball[frame], hoop[frame]
+        ball, h, person = drawn_ball[frame], hoop[frame], player[frame]
         frame_rows.append({
             "frame": frame,
             "ball_x": round(ball.x) if ball else None,
@@ -687,10 +717,14 @@ def export(out_dir, shots, hoop, drawn_ball, has_ball, num_frames):
             "hoop_y1": round(h.y1) if h else None,
             "hoop_x2": round(h.x2) if h else None,
             "hoop_y2": round(h.y2) if h else None,
+            "player_x1": round(person.x1) if person else None,
+            "player_y1": round(person.y1) if person else None,
+            "player_x2": round(person.x2) if person else None,
+            "player_y2": round(person.y2) if person else None,
             "possession": has_ball[frame],
             "fps": FPS,
         })
-    whole = ["ball_x", "ball_y", "hoop_x1", "hoop_y1", "hoop_x2", "hoop_y2"]
+    whole = ["ball_x", "ball_y", "hoop_x1", "hoop_y1", "hoop_x2", "hoop_y2", "player_x1", "player_y1", "player_x2", "player_y2"]
     pd.DataFrame(frame_rows).astype({c: "Int64" for c in whole}).to_csv(out_dir / "frames.csv", index=False)
     print(f"wrote {out_dir / 'shots.csv'} and {out_dir / 'frames.csv'}")
 
@@ -716,7 +750,8 @@ def main():
 
     has_ball = find_possession(detections, paths, num_frames)
     drawn_ball = ball_to_draw(candidates, num_frames)
-    export(Path(TRACKS).parent, shots, hoop, drawn_ball, has_ball, num_frames)
+    player = player_to_draw(detections, drawn_ball, num_frames)
+    export(Path(TRACKS).parent, shots, hoop, drawn_ball, player, has_ball, num_frames)
 
 
 if __name__ == "__main__":
