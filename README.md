@@ -10,7 +10,7 @@ For Olin ENGR3590 Computational Introduction to Robotics
 
   
 
-This README exists as an explanatory overview of general computer vision principles, the YOLO-World and YOLOE models, and ByteTrack. It also acts as documentation, through descriptions of implementation and experimentation, for the basketball stat extraction project. Instructions for how to run and use the repo are also shown below.
+This README exists as an explanatory overview of general computer vision principles, the YOLO-World and YOLOE models, and ByteTrack. It also acts as documentation, through descriptions of implementation and experimentation, for the basketball stat extraction project. Instructions for how to run and use the repo are also shown below. For the project, we worked together outlining what the project should attempt and how, with Enzo writing more model code and Ellie writing more logic code. We worked together on the README. 
 
   
 
@@ -534,6 +534,9 @@ Other stretch goals of things we wanted to implement are having more players on 
 
 **Enzo:** Going into this project, I wanted to reinforce my understanding of how particular learned detection models work. This meant researching the actual architecture of the models themselves and thinking about their performance. Additionally, I wanted to navigate the landscape and develop a better comprehension for their applications, as well as external tools related to the subject. 
 
+Together, we got to learn more about thinking about system architecture and integration from our smooth file creation/utilization system. Structuring something in this manner also made the splitting of work easier and debugging more clear. Furthermore, we have more experience in taking control of our environment and data gathering, mapping to a deeper intuition for these systems.
+
+Many of the things we learned through this project map onto general robotics. For instance, much of the work done regarding ball prediction is similar to how robots that operate in dynamic environments must develop their model of their changing environment. Additionally, the logic behind our project, of extracting pixel information from footage via YOLOE and then performing some analysis based on that is essentially a state estimation project. Beyond this, robots that wish to engage with the real world beyond simulation must have some methods to adapt across environments, which is a principle behind our scale-invariant coordinate system, which something designed for search and rescue might need as it traverses unique environments. 
   
 
 ## Tool Usage
