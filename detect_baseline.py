@@ -1,3 +1,7 @@
+"""
+Original YOLO11 sports_ball standard (NOT USED IN FINAL)
+"""
+
 import argparse
 import csv
 from pathlib import Path
