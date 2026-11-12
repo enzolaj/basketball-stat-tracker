@@ -6,14 +6,16 @@ from ultralytics import YOLOE
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Track the ball in a video with YOLOE + ByteTrack.")
+    parser = argparse.ArgumentParser(description="Detect ball, hoop and person in a video with YOLOE (optionally + ByteTrack).")
     parser.add_argument("video")
     parser.add_argument("--model", default="models/yoloe-11s-seg.pt")
-    parser.add_argument("--prompts", nargs="+", default=["basketball", "orange ball", "basketball hoop", "person"])
+    parser.add_argument("--prompts", nargs="+", default=["basketball", "orange ball", "basketball hoop with net", "person"])
     parser.add_argument("--imgsz", type=int, default=1280)
     parser.add_argument("--conf", type=float, default=0.1)
-    parser.add_argument("--tracker", default="bytetrack.yaml")
+    parser.add_argument("--tracker", default="none")
     parser.add_argument("--out-dir", default="outputs/yoloe_bytetrack")
+    parser.add_argument("--save-video", action="store_true")
+    parser.add_argument("--full-precision", action="store_true")
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -22,14 +24,22 @@ def main():
     model = YOLOE(args.model)
     model.set_classes(args.prompts, model.get_text_pe(args.prompts))
 
-    results = model.track(
+    # map new hoop prompt onto old hoop prompt class name
+    labels = ["basketball hoop" if "hoop" in p else p for p in args.prompts]
+
+    # predict has no tracker argument, so only pass one when a tracker is used
+    use_tracker = args.tracker != "none"
+    run = model.track if use_tracker else model.predict
+    tracker_arg = {"tracker": args.tracker} if use_tracker else {}
+    results = run(
         args.video,
-        tracker=args.tracker,
+        **tracker_arg,
         imgsz=args.imgsz,
         conf=args.conf,
         agnostic_nms=True,  # several prompts can box the same ball; keep only one
         stream=True,  # one frame at a time instead of holding the whole video in memory
-        save=True,
+        save=args.save_video,
+        half=not args.full_precision,  # only takes effect on a GPU
         project=str(out_dir.parent),
         name=out_dir.name,
         exist_ok=True,
@@ -46,15 +56,16 @@ def main():
 
     for result in results:
         boxes = result.boxes
-        # boxes.id is None when nothing in this frame is being tracked
-        if boxes.id is not None:
+        # boxes.id is None with no tracker, or when nothing in this frame is being tracked (written as -1)
+        ids = boxes.id.int().tolist() if boxes.id is not None else [-1] * len(boxes)
+        if ids:
             frames_with_track += 1
             for track_id, class_id, confidence, box in zip(
-                boxes.id.int().tolist(), boxes.cls.int().tolist(), boxes.conf.tolist(), boxes.xyxy.tolist()
+                ids, boxes.cls.int().tolist(), boxes.conf.tolist(), boxes.xyxy.tolist()
             ):
                 track_ids.add(track_id)
                 x1, y1, x2, y2 = [round(value) for value in box]
-                csv_writer.writerow([total_frames, track_id, args.prompts[class_id], round(confidence, 3), x1, y1, x2, y2])
+                csv_writer.writerow([total_frames, track_id, labels[class_id], round(confidence, 3), x1, y1, x2, y2])
 
         total_frames += 1
         if total_frames % 300 == 0:
