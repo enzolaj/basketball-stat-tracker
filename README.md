@@ -543,15 +543,13 @@ Many of the things we learned through this project map onto general robotics. Fo
 
 We used AI tools, primarily Claude, during this project. The possession, drawn-ball, player-box and export functions at the end of [`stat_tracker_alt.py`](stat_tracker_alt.py) are marked in the file as mainly AI-generated, as they serve the visualization rather than the stat logic. [`overlay_from_csv.py`](overlay_from_csv.py) was also written largely with AI assistance. We also used AI assistance for formatting, equations and proofreading for this report. 
 
-  
+  ## How to Run
 
-## How to Run
-
-1. Download or clone our repository into your workspace
+1. Download or clone our repository into your workspace.
 
   
 
-2. Create virtual environment, activate it, and install required packages
+2. Create a virtual environment, activate it, and install the required packages.
 
   
 
@@ -567,18 +565,15 @@ pip install -r requirements.txt
 
   
 
-3. Find the path to your video and run the first file (track phase)
+3. Find the path to your video and run the first file (track phase).
 
   
 
 ```bash
-
-python3 track_yoloe.py /path_to_video --tracker none --prompts basketball "orange ball" "basketball hoop with net" person
-
+python3 track_yoloe.py /path_to_video
 ```
 
-  
-
+The first run downloads the YOLOE weights and the MobileCLIP text encoder (a few hundred MB), so it needs internet access and may appear to pause before frames start processing.
 This might take a while.
 
   
@@ -599,7 +594,7 @@ python3 stat_tracker_alt.py
 
   
 
-6. Run [`overlay_from_csv.py`](overlay_from_csv.py) to get the final video. `/path_to_csv_folder` should generically be `outputs/yoloe_bytetrack/`
+6. Run [`overlay_from_csv.py`](overlay_from_csv.py) to get the final video. `/path_to_csv_folder` should generically be `outputs/yoloe/`
 
   
 
@@ -611,7 +606,7 @@ python3 overlay_from_csv.py /path_to_video /path_to_csv_folder
 
   
 
-7. Complete! Watch your analyzed video in `outputs/yoloe_bytetrack/overlay_csv.mp4`
+7. Complete! Watch your analyzed video in `outputs/yoloe/overlay_csv.mp4`
 
   
 
