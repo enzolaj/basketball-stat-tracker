@@ -98,7 +98,7 @@ The side view was chosen as it resulted in a reasonable testing environment alon
 
 ### Track
 
-  
+### Feature Extraction and Convolution
 
 From a high level, fundamentally, the goal of computer vision is to extract semantic information from camera data. Object detection refers to extracting a list of outputs from the camera information, generally in the form of a bounding box, a class, and a confidence value. Camera data is stored in pixels, and while the exact pixel intensities are not sufficient for complex detection, the spatial and temporal relationships between these pixels can provide unique insights into extracting necessary information for object detection. For instance, a basketball can contain different pixel information across varying lighting conditions, motion, and environment interactions, such as being partly covered by a hand. Consequently, the detection requires information about the region of interest that changes little with the object’s visual appearance and is more directly linked to the object itself. This information is often referred to as the features of an image, and much work is being done on enhancing feature extractors. To accomplish this, models perform a series of convolutions. A convolutional filter is a small array of weights, or a kernel, that are applied across every position in an image, where at each position, the filter multiplies the input values (as in pixel intensity values from the image) by the kernel and sums the products. Applying one filter across the image produces a two-dimensional map of how intensely the kernel’s pattern is present at each location. A convolutional layer applies many filters at once and merges their maps into a feature map with a channel per filter. Given that these same weights are universally applied across the image, the pattern detection is uniform across the image, which makes detection a valuable application of convolution as regions of interest can exist anywhere within the frame.
 
@@ -110,7 +110,7 @@ One issue, however, is that the size of your kernel array dictates the scale of 
 
 With this, one major decision is the weight of each kernel. These weights are generally learned rather than chosen by hand. The network goes through a series of predicting boxes for images whose correct boxes are known, a loss function is used to calculate the error, and the weights go through an adjustment to reduce the loss until it reaches a plateau. Over a large dataset, such as the COCO dataset [1] the YOLO models train on, the filters converge to finding whichever patterns are useful for separating the classes from the background.
 
-  
+#### The YOLO Architecture
 
 Taken together, the track phase, which is entirely in [`track_yoloe.py`](track_yoloe.py), runs an off-the-shelf object detector on every frame and writes each detected object, which is our ball, hoop, and person, to `tracks.csv`. This section explains how YOLO in particular works, our process for determining the detector, and the parameters selected for this model and why.
 
@@ -142,7 +142,7 @@ Given that many neighboring cells would represent the same object, the raw outpu
 
 The network resizes each frame to a fixed input size before processing. This directly impacts the ability of the network to detect small objects, such as our basketball. The original inputs, as mentioned earlier, are at 1920 pixels wide. At the default input size of 640 pixels, each frame is only a third of its original size, meaning the ball, which is about 25 pixels wide in the original, becomes just 8, mapping to a single cell on the finest grid; however, at 1280 pixels, that same ball would cover two cells, leading to a great accuracy increase with that additional information.
 
-  
+#### Open-Vocabulary Detection
 
 In the description of the system’s head, the score of a class is computed from the cell’s feature vector, derived from the learned weight vector’s values. Since these vectors are fixed when training ends, the set of classes they can work under is fixed as well. The traditional YOLO models are trained on the COCO dataset, meaning there exist only 80 fixed classes that the model is able to extract from a given image. In our case, the classes of interest were originally “person” and “sports ball”; however, there was no simple hoop or basketball detection.
 
@@ -154,7 +154,7 @@ Open-vocabulary detectors tackle this problem by introducing a comparison betwee
 
 We ended up comparing two open-vocabulary detectors: YOLO-World [10] and YOLOE [4]. YOLO-World employs the CLIP embeddings directly into the neck with the purpose of computing the image features with the text prompts in mind. This looks like reweighing the image features at each level by their similarity to the prompts in that shared space. YOLOE leaves the original backbone and neck unchanged and introduces the text only in the head. Its text prompts go through RepRTA (re-parameterizable region-text alignment), a residual network that refines the MobileCLIP [11] text embeddings to better match the detector’s region embeddings.
 
-  
+#### Model and Prompt Selection  
 
 To analyze the performance of these three models, we looked at a slew of metrics. This included the general category of accuracy, and specifically things like precision and recall, as well as speed. Precision is the percentage of positive predictions that were actually positive, and recall refers to the percentage of positive instances that were predicted. Generally, we found that the original YOLO model with “sports ball” could only find the ball in around 25% of frames, which prompted us to look elsewhere. Between YOLO-World and YOLOE, the difference in accuracy was of a lesser extent. This was done by an eye-test and YOLOE was chosen as it was more likely to have a valid detection of the ball. The speed between the two models was also similar, as each run for both models took about 40 minutes for our footage.
 
@@ -166,7 +166,7 @@ One element that the prompted class detection gives is the range of classes that
 
 Additionally, after we had primarily focused on YOLOE, we realized there existed a modern version of YOLOE-26, though our tests reported far fewer hoop detections. Upon further inspection, this was due to the fact the confidence threshold was not being met; at that point, no further testing was deemed necessary as the YOLOE-11 detection had nearly saturated the video.
 
-  
+#### Tracking Across Frames
 
 With this, our detectors treat each frame independently, meaning we gain knowledge of where objects are in space but lack the temporal element of relationships between one frame and the next. Establishing this relationship is necessary to understand the event of interest as they occur across frames. Many modern implementations of this tracking from detection use a procedure where they predict where the next detection should be, based on information from the current frame, and match the next frame’s information to that prediction to create a string of detections that are considered together.
 
@@ -196,7 +196,7 @@ Taken together, these two methods of prediction and matching allow us to create 
 
 Despite this, we found that implementing ByteTrack on our footage did not provide accurate tracking. Generally, this worked fine on the hoop and person tracks, which comes from the fact that the person and hoop bounding boxes are large and do not carry large velocities; in contrast, the ball is relatively much smaller and also moves quickly. This means that the region overlap between frames was not sufficient to continue the track and many instances of the ball were dropped. Consequently, we did not end up using ByteTrack for our purposes and instead chose to have another method of tracking between frames. This also provides further information for determining the exact instance a shot could be considered released. This speaks to a larger problem that would have existed for our project had we attempted it called re-identification, which suggests that despite making tracks for the same class, there must be further information to discern objects within that class. For instance, on the *shots* footage, whose higher frame rate makes the ball move less per frame, ByteTrack did form tracks on the ball but gave it a new “ID” each time a track was lost, producing 58 IDs for the same ball. For a project attempting to assign statistics to an individual player, 58 interpretations of the same ball would cause great trouble. Given that knowledge, we did not deem it in scope for our project as we worked.
 
-  
+#### Limitations of Prompt-Based Detection
 
 One of the limitations of prompt-based detection is that some concepts are rarely represented in the training data and prove difficult to detect. For instance, we had attempted to introduce the prompt “basketball in the net” to see if the model had the ability to accurately detect when the ball would be in the net, allowing much of the determine logic to be based on this detection; however, there were many false-positives as the detector highlighted the hoop with no ball as our “basketball in the net”.
 
