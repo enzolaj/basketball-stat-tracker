@@ -18,7 +18,7 @@ This README exists as an explanatory overview of general computer vision princip
 
   
 
-The aim of this project was, given footage of either an individual or multiple individuals playing basketball, extract a "stat-sheet", a document containing information of each player's contributions and interactions within the game, as well as provide a visual layer on top of said footage. To this extent, we managed to construct a field goal percentage tracker for a singular player based on hand-held phone footage. The system reports every shot attempt, defined as the ball reaching rim height near the hoop, along with the moment the ball was released and player possession. This project was developed on and tested against two videos of a single shooter attempting shots at a basket titled *layups* and *shots*, and further tested on a third video with two players titled *lgrac*. The program’s findings were evaluated against hand-made labels based on the footage.
+The aim of this project was, given footage of either an individual or multiple individuals playing basketball, extract a "stat-sheet", a document containing information of each player's contributions and interactions within the game, as well as provide a visual layer on top of said footage (Figure 1). To this extent, we managed to construct a field goal percentage tracker for a singular player based on hand-held phone footage. The system reports every shot attempt, defined as the ball reaching rim height near the hoop, along with the moment the ball was released and player possession. This project was developed on and tested against two videos of a single shooter attempting shots at a basket titled *layups* and *shots*, and further tested on a third video with two players titled *lgrac*. The program’s findings were evaluated against hand-made labels based on the footage.
 
   
 
@@ -498,14 +498,14 @@ Full videos:
 - lgrac: https://drive.google.com/file/d/1DooS5vobLcN6iOGNP6AIgfZB3WZ0nU5E/view?usp=sharing
 - lgrac (overlay): https://drive.google.com/file/d/1RU1gxzysDUrbP8UcL3Zp400Xt2AHQo6b/view?usp=sharing 
 
-  
+For viewing purposes, we embed both a miss and made shot in Figure 3 below. 
 
 <p align="center"><img src="media/layup.gif" alt="A made layup" width="640"></p>
 <p align="center"><em>Figure 3: A made shot in <i>layups</i>.</em></p>
 
   
 
-A particular edge case that we want to highlight is the below shot where the ball arcs in the front of the basket, in the correct horizontal position, but at the wrong depth, our algorithm is still accurate enough to determine it as a miss.
+A particular edge case that we want to highlight is the below shot (Figure 4) where the ball arcs in the front of the basket, in the correct horizontal position, but at the wrong depth, our algorithm is still accurate enough to determine it as a miss.
 
   
 
