@@ -10,17 +10,6 @@ import pandas as pd
 
 TRACKS = "outputs/layups/tracks.csv"
 VIDEO = "data/layups.mov"
-FPS = cv2.VideoCapture(VIDEO).get(cv2.CAP_PROP_FPS)  
-
-
-import statistics
-from pathlib import Path
- 
-import cv2
-import pandas as pd
- 
-TRACKS = "outputs/layups/tracks.csv"
-VIDEO = "data/layups.mov"
 FPS = cv2.VideoCapture(VIDEO).get(cv2.CAP_PROP_FPS)
  
 # hoop
