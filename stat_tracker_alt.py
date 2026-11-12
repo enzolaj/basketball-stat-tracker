@@ -8,46 +8,56 @@ from pathlib import Path
 import cv2
 import pandas as pd
 
-TRACKS = "outputs/layups_pipeline/tracks.csv"
+TRACKS = "outputs/layups/tracks.csv"
 VIDEO = "data/layups.mov"
-FPS = cv2.VideoCapture(VIDEO).get(cv2.CAP_PROP_FPS)   # read per video, so 60 fps clips keep the right time settings
-
-# hoop: reject backboard-sized boxes, median out detector wobble
-HOOP_SHAPE = (0.5, 0.8)     # allowed height-to-width ratio of the hoop box; taller boxes include the backboard
-HOOP_SMOOTH_S = 0.25        # median window for the hoop box, s on each side of a frame
-
-# balls and paths: gate matches by speed so junk can't steal the ball
-HOOP_ZONE_U = (-1.5, 1.5)   # allowed sideways range from the hoop center, hoop widths
-HOOP_ZONE_V = (-1.5, 2.5)   # allowed vertical range from the rim, hoop widths (negative = above)
-FIXED_SPOT_SIZE = 0.1       # grid spot size for finding fixed objects, hoop widths
-FIXED_SHARE = 0.4           # minimum share of the video's seconds for a spot to count as a fixed object
-BALL_MAX_SPEED = 15         # maximum ball speed, hoop widths/s (shots reach the rim at about 10)
-MAX_SPEED_CHANGE = 8        # maximum difference from the path's predicted speed, hoop widths/s
-BOX_JITTER = 0.3            # extra distance allowed for box wobble between frames, hoop widths
-PATH_LOST_S = 0.5           # maximum time a path can go unseen before it ends, s
-
-# shot attempts: trigger at rim height, merge rim bounces into one attempt
-RIM_V = 0.45                # maximum distance below the rim to count as rim height, hoop widths
-RIM_U = 1.0                 # maximum sideways distance from the hoop center, hoop widths
-RIM_CONF = 0.2              # minimum detection confidence for an attempt, 0 to 1
-SAME_SHOT_S = 0.75          # maximum gap between rim-height moments in the same attempt, s
-NET_EXIT_S = 1.5            # maximum time after the rim for the ball to exit the net, s
-
-# release: walk back from the rim to the last real hold
-HOLD_MARGIN = 0.45          # widening of each person's box for the holding check, fraction of box width
-RELEASE_LOOKBACK_S = 3      # maximum search time before the rim for the release, s
-HOLD_MIN_S = 0.1            # minimum time in a player's hands to count as held, s
-
-# make and miss:
-SLOW_WINDOW_S = 0.2
-SLOW_MIN_SEEN = 3
-SLOW_DROP =  4.5
-RIM_EDGE_U = 0.5
-NEAR_CENTER_U = 0.3
-MIN_HIDDEN_FRAMES = 3
-NET_BOTTOM_V = 0.55
+FPS = cv2.VideoCapture(VIDEO).get(cv2.CAP_PROP_FPS)  
 
 
+import statistics
+from pathlib import Path
+ 
+import cv2
+import pandas as pd
+ 
+TRACKS = "outputs/layups/tracks.csv"
+VIDEO = "data/layups.mov"
+FPS = cv2.VideoCapture(VIDEO).get(cv2.CAP_PROP_FPS)
+ 
+# hoop
+HOOP_SHAPE = (0.5, 0.8)     # height/width range for the hoop box; anything taller is probably the backboard
+HOOP_SMOOTH_S = 0.25        # median window on each side of a frame, s
+ 
+# ball tracking
+HOOP_ZONE_U = (-1.5, 1.5)   # sideways range around the hoop center, hoop widths
+HOOP_ZONE_V = (-1.5, 2.5)   # vertical range around the rim, hoop widths (negative is above)
+FIXED_SPOT_SIZE = 0.1       # grid size for finding things that never move, hoop widths
+FIXED_SHARE = 0.4           # a spot with a "ball" in more than this share of seconds is a fixed object
+BALL_MAX_SPEED = 15         # hoop widths/s; shots hit the rim around 10
+MAX_SPEED_CHANGE = 8        # how far off the predicted speed a match can be, hoop widths/s
+BOX_JITTER = 0.3            # slack for boxes wobbling between frames, hoop widths
+PATH_LOST_S = 0.5           # a path ends after going unseen this long, s
+ 
+# shot attempts
+RIM_V = 0.45                # how far below the rim still counts as rim height, hoop widths
+RIM_U = 1.0                 # how far sideways from the hoop center, hoop widths
+RIM_CONF = 0.2              # min detection confidence for an attempt
+SAME_SHOT_S = 0.75          # rim-height moments closer than this are one shot (rim bounces), s
+NET_EXIT_S = 1.5            # how long after the rim the ball has to come out of the net, s
+ 
+# release
+HOLD_MARGIN = 0.45          # how much to widen a person's box for the holding check, fraction of box width
+RELEASE_LOOKBACK_S = 3      # how far back from the rim to look for the release, s
+HOLD_MIN_S = 0.1            # ball has to be in someone's hands this long to count, s
+ 
+# make and miss
+SLOW_WINDOW_S = 0.2         # window after the net exit for measuring speed, s
+SLOW_MIN_SEEN = 3           # need at least this many sightings in that window
+SLOW_DROP =  4.5            # dropping slower than this means the net caught it, hoop widths/s
+RIM_EDGE_U = 0.5            # exits farther sideways than this are outside the rim, hoop widths
+NEAR_CENTER_U = 0.3         # exits closer than this are clearly through the middle, hoop widths
+MIN_HIDDEN_FRAMES = 3       # frames the net has to hide the ball for
+NET_BOTTOM_V = 0.55         # bottom of the net below the rim, hoop widths
+ 
 # possession: skip balls at the feet, vote out flicker
 POSSESSION_SMOOTH_S = 0.2  # majority vote window for possession, s on each side of a frame
 HOLD_LOWEST = 0.9           # lowest point the ball can be in a person's box and still count as held, fraction of box height
@@ -105,6 +115,7 @@ class Box:
         Returns:
             (u, v) in hoop widths: u sideways from the rim center, v down from the rim.
         """
+        # difference normalized by width
         u = (box.center_x - self.center_x) / self.width
         v = (box.center_y - self.y1) / self.width
         return u, v
@@ -121,6 +132,7 @@ class Box:
             True if the ball's center is inside the widened box.
         """
         margin = HOLD_MARGIN * self.width
+        # subtracting margin from left, add it on right, same for top (not bottom bc dont want low possession)
         return self.x1 - margin <= ball.x <= self.x2 + margin and self.y1 - margin <= ball.y <= self.y2
 
 
@@ -189,6 +201,8 @@ class BallPath:
         Args:
             ball: Next Ball, later than the last one.
         """
+        # speed is just from the last two points. divide by the actual time between them
+        # since the path can skip frames when the ball isnt detected
         if self.last is not None:
             seconds = (ball.frame - self.last.frame) / FPS
             self.speed = ((ball.u - self.last.u) / seconds, (ball.v - self.last.v) / seconds)
@@ -218,13 +232,11 @@ class BallPath:
         """
         seconds = (frame - self.last.frame) / FPS
         if self.speed is None:
-            # allow anywhere within BALL_MAX_SPEED until the speed is known
+            # no speed yet, so anything within max ball speed is fine
             return self.last.u, self.last.v, BOX_JITTER + BALL_MAX_SPEED * seconds
-        # assume its last speed, give or take MAX_SPEED_CHANGE,
-        # so still junk stays put instead of jumping onto a moving ball
+        # keep the last speed with some wiggle room, otherwise a still false detection can latch onto a ball flying past it
         speed_u, speed_v = self.speed
         return self.last.u + speed_u * seconds, self.last.v + speed_v * seconds, BOX_JITTER + MAX_SPEED_CHANGE * seconds
-
 
 class Shot:
     """One shot attempt and everything decided about it.
@@ -259,16 +271,21 @@ def load_detections():
         num_frames: Frame count of the video.
     """
     df = pd.read_csv(TRACKS)
-    # merge synonym prompts into one kind
+    # map the prompts that represent same idea into same idea
     prompt_to_kind = {"basketball hoop": "hoop", "basketball": "ball", "orange ball": "ball", "person": "person"}
+    # nested dicts instead of a list per frame, since most frames dont have every kind
     detections = {"hoop": {}, "ball": {}, "person": {}}    # kind -> frame -> list of Box
     for row in df.to_dict("records"):
         kind = prompt_to_kind.get(row["class"])
         if kind is None:
             continue
+        # setdefault makes an empty list the first time we see this frame, then appends to it after that
+        # a frame can have more than one box per kind (two balls, a few people)
         box = Box(row["x1"], row["y1"], row["x2"], row["y2"], row["confidence"])
         detections[kind].setdefault(row["frame"], []).append(box)
 
+    # frames start at 0, so the count is the last frame + 1
+    # using the max instead of counting unique frames bc frames with no detections dont have a row at all
     num_frames = df["frame"].max() + 1
     return detections, num_frames
 
@@ -287,10 +304,12 @@ def steady_hoop(detections, num_frames):
     best = {}
     for frame, boxes in detections["hoop"].items():
         rim_shaped = [box for box in boxes if HOOP_SHAPE[0] <= box.height / box.width <= HOOP_SHAPE[1]]
+        # if every box that frame was the wrong shape, the frame just gets skipped
         if rim_shaped:
+            # sort them using lambda bc confidence is feature
             best[frame] = max(rim_shaped, key=lambda box: box.confidence)
 
-    # median over +/- HOOP_SMOOTH_S to cancel wobble; carry the last hoop through gaps
+    # median over +/- HOOP_SMOOTH_S to cancel wobble, better than mean for smth like this
     window = to_frames(HOOP_SMOOTH_S)
     hoop = [None] * num_frames
     for frame in range(num_frames):
@@ -298,6 +317,7 @@ def steady_hoop(detections, num_frames):
         if nearby:
             hoop[frame] = Box(*(statistics.median(getattr(box, edge) for box in nearby) for edge in ("x1", "y1", "x2", "y2")))
         elif frame > 0:
+            # keep old hoop if no hoop valid
             hoop[frame] = hoop[frame - 1]
     return hoop
 
@@ -314,18 +334,21 @@ def fixed_spots(all_balls, num_frames):
     Returns:
         Set of fixed spots, as Ball.spot tuples.
     """
+    # map spots to define set of seconds with ball in spot
     seconds_at_spot = {}
     for frame_balls in all_balls:
         for ball in frame_balls:
+             # its a set so the same second only gets counted once
             seconds_at_spot.setdefault(ball.spot, set()).add(int(ball.frame / FPS))
 
     video_seconds = int(num_frames / FPS)
     fixed = set()
     for spot_u, spot_v in seconds_at_spot:
-        # pool the 3x3 grid around the spot so jitter across a spot edge still adds up
+        # also check the 8 squares around it, otherwise something sitting right on a grid line
         seconds_near = set()
         for step_u in (-1, 0, 1):
             for step_v in (-1, 0, 1):
+                # |= adds the neighbor's seconds into seconds_near (set union), and empty set if the neighbor never had a ball
                 seconds_near |= seconds_at_spot.get((spot_u + step_u, spot_v + step_v), set())
         if len(seconds_near) > FIXED_SHARE * video_seconds:
             fixed.add((spot_u, spot_v))
@@ -343,10 +366,14 @@ def ball_candidates(detections, hoop, num_frames):
     Returns:
         List of Balls per frame.
     """
+    # need a hoop to get hoop width coords, so skip frames before it shows up
+    # one list per frame. written this way bc [[]] * num_frames would make every frame share the same list
+    # this was suggested by an LLM
     all_balls = [[] for _ in range(num_frames)]
     for frame, boxes in detections["ball"].items():
         if hoop[frame] is not None:
             all_balls[frame] = [Ball(frame, box, hoop[frame]) for box in boxes]
+    # fixed spots need the whole video to find, so filter after building every frame
     fixed = fixed_spots(all_balls, num_frames)
     return [[ball for ball in frame_balls if ball.spot not in fixed] for frame_balls in all_balls]
 
@@ -365,12 +392,14 @@ def follow_balls(candidates, num_frames):
     """
     paths = []
     for frame in range(num_frames):
+        # old paths stay in the list but only recent ones can take new balls
         active = [path for path in paths if path.seen_recently(frame)]
 
         # collect (candidate, path) pairs within the path's reach
         pairs = []
         for i, ball in enumerate(candidates[frame]):
             for j, path in enumerate(active):
+                # gap goes first in the tuple so sorting the list sorts by distance
                 expected_u, expected_v, reach = path.predict(frame)
                 gap = ball.distance_to(expected_u, expected_v)
                 if gap <= reach:
@@ -385,7 +414,7 @@ def follow_balls(candidates, num_frames):
             used_balls.add(i)
             used_paths.add(j)
 
-        # start a new path per leftover: a new ball or a bad detection
+        # leftovers are either a new ball or a bad detection, give new path
         for i, ball in enumerate(candidates[frame]):
             if i not in used_balls:
                 paths.append(BallPath(ball))
@@ -404,9 +433,12 @@ def hoop_balls(paths, num_frames):
     Returns:
         List per frame of the most confident Ball near the hoop, or None.
     """
+    # leave frames with no ball as None
     hoop_ball = [None] * num_frames
     for path in paths:
+        # loop by path instead of by frame since thats how the balls are stored
         for frame, ball in path.balls.items():
+            # a frame can show up in more than one path, so keep whichever ball is more confident
             if ball.near_hoop and (hoop_ball[frame] is None or ball.confidence > hoop_ball[frame].confidence):
                 hoop_ball[frame] = ball
     return hoop_ball
@@ -427,6 +459,8 @@ def find_shots(hoop_ball):
     for frame, ball in enumerate(hoop_ball):
         if ball is None or not ball.at_rim_height:
             continue
+        # compare to the end of the last shot, not the start
+        # "shots and" to skip when there arent any shots yet
         if shots and frame - shots[-1].rim_end_frame <= SAME_SHOT_S * FPS:
             shots[-1].rim_end_frame = frame
         else:
@@ -449,13 +483,19 @@ def find_release(shot, hoop_ball, detections):
         Release frame, or None when the path never reaches a player.
     """
     path = hoop_ball[shot.rim_frame].path
-    held_until = None      # latest in-hands frame of the current run
+    held_until = None      # latest frame of the current holding streak, which is the release if long enough
+
+    # path.balls only has frames where the ball was seen, so these arent always consecutive
+    # reverse=True since we want earlier balls
     for frame in sorted(path.balls, reverse=True):
+        # the path keeps going after the rim, skip those
         if frame > shot.rim_frame:
             continue
         if shot.rim_frame - frame > to_frames(RELEASE_LOOKBACK_S):
             return None
+        # any() is true if at least one person in the frame is holding it
         if any(person.holds(path.balls[frame]) for person in detections["person"].get(frame, [])):
+            # first held frame we hit going backwards = moment right before it left their hands
             if held_until is None:
                 held_until = frame
             # require HOLD_MIN_S of holding to rule out the ball just passing a hand
@@ -484,7 +524,7 @@ def leaves_net(shot, hoop_ball):
     previous = start_ball
 
     # find the frame where the ball comes out the bottom of the net
-    # use hoop_ball, not the path: the net hiding the ball breaks the path
+    # use hoop_ball, not the path bc net hiding ball breaks path
     for f in range(shot.rim_frame + 1, len(hoop_ball)):
         if f - shot.rim_end_frame > to_frames(NET_EXIT_S):
             break
@@ -492,6 +532,7 @@ def leaves_net(shot, hoop_ball):
         if ball is None:
             continue
 
+        
         crossed_net = previous.v <= NET_BOTTOM_V and ball.v > NET_BOTTOM_V
         moving_down = ball.v > previous.v
 
@@ -502,10 +543,6 @@ def leaves_net(shot, hoop_ball):
         previous = ball
 
     return None
-# do we have to check that the ball is in the correct x position?
-# or is that already checked when the Shot is instantiated?
-# check that in is_make
-
 
 def net_hid_it(shot, hoop_ball, exit_frame, min_hidden_frames):
     """Make clue: the net hid the ball just before it came out.
@@ -547,7 +584,7 @@ def net_slowed_it(hoop_ball, exit_frame):
     Returns:
         True if the ball slowed, None with too few sightings to tell.
     """
-    # collect the frames in the window right after the exit where the ball was seen
+    # min so the window doesnt run past the end of the video
     window_end = min(len(hoop_ball), exit_frame + to_frames(SLOW_WINDOW_S))
     seen = []
     for f in range(exit_frame, window_end):
@@ -557,11 +594,12 @@ def net_slowed_it(hoop_ball, exit_frame):
     if len(seen) < SLOW_MIN_SEEN:
         return None
 
-    # average downward speed from the first to the last sighting, hoop widths/s
+    # avg downward speed from first to last sighting in hoop wdiths
     first = hoop_ball[seen[0]]
     last = hoop_ball[seen[-1]]
     seconds = (last.frame - first.frame) / FPS
     speed = (last.v - first.v) / seconds
+    # v goes down, so positive speed = falling
     return 0 <= speed < SLOW_DROP
 
 def is_make(shot, hoop_ball):
@@ -572,27 +610,28 @@ def is_make(shot, hoop_ball):
         hoop_ball: From hoop_balls.
 
     Returns:
-        True for a make, False for a miss, None if undecided.
+        True for a make, False for a miss.
     """
+    # if doesnt go below net, then miss
     net_exit = leaves_net(shot, hoop_ball)
     if net_exit is None:
         return False
     exit_frame, exit_u = net_exit
 
-    # leaves_net no longer rejects misses, so check here that the ball came down inside the rim
+    # if rlly far off, then miss
     if abs(exit_u) >= RIM_EDGE_U:
         return False
 
-    votes = [abs(exit_u) < NEAR_CENTER_U,
-             net_hid_it(shot, hoop_ball, exit_frame, MIN_HIDDEN_FRAMES),
-             net_slowed_it(hoop_ball, exit_frame)]
+    # collect three checks (centered, hidden, slowed)
+    near_center = abs(exit_u) < NEAR_CENTER_U
+    hidden = net_hid_it(shot, hoop_ball, exit_frame, MIN_HIDDEN_FRAMES)
+    slowed = net_slowed_it(hoop_ball, exit_frame)
 
-    # need 2 of 3 clues to agree; net_slowed_it can abstain with None
-    if votes.count(True) >= 2:
-        return True
-    if votes.count(False) >= 2:
-        return False
-    return None
+    # need one of two position checks and speed check
+    if slowed is None:
+        # if no speed, make both position checks agree instead
+        return near_center and hidden
+    return slowed and (near_center or hidden)
 
 # The following code is majorly AI-generated since its mainly for visuals
 
