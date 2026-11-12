@@ -578,7 +578,7 @@ This might take a while.
 
   
 
-4. Edit `TRACKS` and `VIDEO` variables in [`stat_tracker_alt.py`](stat_tracker_alt.py) to match the paths for your video and `tracks.csv`. `tracks.csv` should generically be in `outputs/yoloe_bytetrack/tracks.csv`.
+4. Edit `TRACKS` and `VIDEO` variables in [`stat_tracker_alt.py`](stat_tracker_alt.py) to match the paths for your video and `tracks.csv`. `tracks.csv` should generically be in `outputs/layups/tracks.csv`.
 
   
 
@@ -594,7 +594,7 @@ python3 stat_tracker_alt.py
 
   
 
-6. Run [`overlay_from_csv.py`](overlay_from_csv.py) to get the final video. `/path_to_csv_folder` should generically be `outputs/yoloe/`
+6. Run [`overlay_from_csv.py`](overlay_from_csv.py) to get the final video. `/path_to_csv_folder` should generically be `outputs/layups/`
 
   
 
