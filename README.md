@@ -98,7 +98,7 @@ The side view was chosen as it resulted in a reasonable testing environment alon
 
 ### Track
 
-### Feature Extraction and Convolution
+#### Feature Extraction and Convolution
 
 From a high level, fundamentally, the goal of computer vision is to extract semantic information from camera data. Object detection refers to extracting a list of outputs from the camera information, generally in the form of a bounding box, a class, and a confidence value. Camera data is stored in pixels, and while the exact pixel intensities are not sufficient for complex detection, the spatial and temporal relationships between these pixels can provide unique insights into extracting necessary information for object detection. For instance, a basketball can contain different pixel information across varying lighting conditions, motion, and environment interactions, such as being partly covered by a hand. Consequently, the detection requires information about the region of interest that changes little with the object’s visual appearance and is more directly linked to the object itself. This information is often referred to as the features of an image, and much work is being done on enhancing feature extractors. To accomplish this, models perform a series of convolutions. A convolutional filter is a small array of weights, or a kernel, that are applied across every position in an image, where at each position, the filter multiplies the input values (as in pixel intensity values from the image) by the kernel and sums the products. Applying one filter across the image produces a two-dimensional map of how intensely the kernel’s pattern is present at each location. A convolutional layer applies many filters at once and merges their maps into a feature map with a channel per filter. Given that these same weights are universally applied across the image, the pattern detection is uniform across the image, which makes detection a valuable application of convolution as regions of interest can exist anywhere within the frame.
 
@@ -565,7 +565,7 @@ pip install -r requirements.txt
 
   
 
-3. Find the path to your video and run the first file (track phase).
+3. Find the path to your video and run the first file (track phase). To skip this step, use the included sample from *layups* at `outputs/layups/tracks.csv`.
 
   
 
@@ -578,7 +578,7 @@ This might take a while.
 
   
 
-4. Edit `TRACKS` and `VIDEO` variables in [`stat_tracker_alt.py`](stat_tracker_alt.py) to match the paths for your video and `tracks.csv`. `tracks.csv` should generically be in `outputs/layups/tracks.csv`.
+4. Edit `TRACKS` and `VIDEO` variables in [`stat_tracker_alt.py`](stat_tracker_alt.py) to match the paths for your video and `tracks.csv`. They default to the included *layups* sample and `data/layups.mov`.
 
   
 
@@ -606,7 +606,7 @@ python3 overlay_from_csv.py /path_to_video /path_to_csv_folder
 
   
 
-7. Complete! Watch your analyzed video in `outputs/yoloe/overlay_csv.mp4`
+7. Complete! Watch the analyzed video at `overlay_csv.mp4` in the same folder as the CSVs.
 
   
 
